@@ -72,7 +72,7 @@ Then, debug or run it there.
 
 Or open another terminal, and type (assume the debug version is built):
     $ cd FreeRTOS_Posix/Debug
-    $ ./FreeFreeRTOS_Posix --unix-server=/tmp/UNIXSOCKET_SRV_NAME --unix-client=/tmp/UNIXSOCKET_CLI_NAME
+    $ ./FreeRTOS_Posix --unix-server=/tmp/UNIXSOCKET_SRV_NAME --unix-client=/tmp/UNIXSOCKET_CLI_NAME
 
 
 Debugging Using GDB
