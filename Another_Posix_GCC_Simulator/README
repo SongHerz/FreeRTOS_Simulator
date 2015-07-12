@@ -1,0 +1,284 @@
+Another Posix GCC Eclipse FreeRTOS 6.0.4 Simulator
+
+Contributed by Hongzhi Song. dldz2002@gmail.com
+Based on William's brilliant idea.
+William's FreeRTOS Simulator contribution can be found here:
+http://interactive.freertos.org/entries/126329-linux-posix-simulator-using-gcc
+
+All feedbacks are welcome, but I am and will be pretty busy in a few incoming
+months, because I have to find a job and finish my dissertation. So maybe I
+won't reply very soon.
+
+
+Changelog
+    Feb. 5th, 2011 - By gathering element operation statistics at run time, it
+reveals that over 80% of task requests are interrupt related operations. So, to
+improve simulator performance, interrupts related operations can be processed
+asynchronously now. And the simulator can be configured by alternating async
+interrupt operation or fast interrupt response parameters.
+
+
+Introduction
+This is another port that allows FreeRTOS to act as a scheduler for pthreads
+within a process, based on William's brilliant idea. But it is more POSIX
+compliant. It is designed to allow for development and testing of code in a
+Posix environment. It is considered a simulator because it will not keep
+real-time but it will retain the same deterministic task switching.
+
+
+Build Instructions
+    Pre-requisites:
+        make    (tested with GNU Make 3.81)
+        gcc (tested with gcc 4.3.2)
+    Optional:
+        Eclipse Helios
+        CDT 7.0
+        Eclipse STATEVIEWER Plug-in v1.0.10 (not tested yet)
+
+For other build instructions, please refer to Build Instructions section from
+WilliamReadme.txt shipped with this contribution, or Readme.txt shipped with
+William's contribution.
+
+
+Run Instructions
+Some additional config parameters specified for the simulator are provided in
+FreeRTOSConfig.h:
+
+configUSE_EXTERNAL_TICK_SOURCE:
+    0, use interval timer to generate system tick.
+    1, the system tick is provided by some other program via SIGALRM signal.
+
+configUSE_ASYNC_INTERRUPT_OPERATIONS:
+    0, interrupt related operation requests are sent to management thread, and
+       processed synchronously.
+    1, interrupt related operations are processed by their owner task threads,
+       and they're synchronized with interrupts by pthread mutex.
+
+configUSE_FAST_INTERRUPT_RESPONSE:
+    0, management thread intends to process all task thread's requests, and then
+       process interrupts.
+    1, management thread will check interrupts after processing each task
+       request.
+
+First, run the echo server. Open a terminal, and type:
+    $ cd EchoSrv
+    $ make
+    $ ./FRTOSSIM_UnixSocket_echo_srv
+
+And then, run the simulator.
+You can set its arguments in eclipse:
+--unix-server=/tmp/UNIXSOCKET_SRV_NAME --unix-client=/tmp/UNIXSOCKET_CLI_NAME
+Then, debug or run it there.
+
+Or open another terminal, and type (assume the debug version is built):
+    $ cd FreeRTOS_Posix/Debug
+    $ ./FreeFreeRTOS_Posix --unix-server=/tmp/UNIXSOCKET_SRV_NAME --unix-client=/tmp/UNIXSOCKET_CLI_NAME
+
+
+Debugging Using GDB
+The port layer makes use of signals: SIGUSR1, SIGALRM, and (SIGRTMIN + 3). And a
+.gdbinit file has been already included by this contribution. I have not tried
+STATEVIEWER Plug-in, so I don't know if it will work for this contribution.
+
+You can call vTraceHistory() function in gdb, to see interrupt, task switch, and
+element request statistics. And also, recent element requests history and task
+switch information is shown by that function. If
+configUSE_ASYNC_INTERRUPT_OPERATIONS is '0', all the information mentioned above
+is available. If configUSE_ASYNC_INTERRUPT_OPERATIONS is '1', some interrupt
+related information, especially critical enter/exit information is not
+available, for most of the time it is not synchronized with the management loop. 
+
+For other debugging information, please refer to WilliamReadme.txt.
+
+
+AIO
+For POSIX compliant purpose, POSIX AIO is adopted. AIO layer and device layer
+that depends on AIO layer, are implemented to support various device simulation.
+Currently, only asynchronous device reading is supported, since usually a task
+will be suspended when waiting for data from a peripheral device, and when
+writing, data will be write out immediately to the buffer of a device.
+
+Four network devices are implemented based on device layer, and an echo client
+task utilizes one of the device to communicate with an echo server. So it is
+possible to run this contribution with some other program, such as a network
+simulator.
+
+
+Port-Layer Design Methodology Justification
+For base idea, please refer to "Port-Layer Design Methodology Justification"
+section from WilliamReadme.txt. I only want to mention differences between this
+contribution and William's. All the differences are related to POSIX compliance.
+
+When a task is suspended in its suspend signal handler, the signal handler is
+not blocked by 'sigwait' function, but instead, it blocks on a pipe reading. So,
+to resume a suspended task, write to that pipe is required.
+
+A management thread is used to process element operations required by FreeRTOS.
+A task sends its element operation requests to the management thread.  An
+interrupt sends its bottom-halves to the management thread. Task requests and
+interrupt bottom-halves are serialized carefully, and processed by the
+management thread one by one.
+
+
+Known Issues
+When suicidal task demo running, after each task creating and deleting, there
+will be 1~4 pages of extra memory allocated, but not released. I have checked
+the simulator with valgrind, but no memory leak found. So, I suspect it relates
+to thread releasing, for 'pthread_join' man page says "The pthread_join()
+function, like all other non-async-cancel-safe functions, can only be called
+with deferred cancelability type". Now, the cancelability of each thread is set to
+PTHREAD_CANCEL_ASYNCHRONOUS, may be this is the causation, but there is no
+cancellation point in the simulator. I didn't see any application that creates
+and deletes tasks dynamically, so maybe I will fix this later.
+
+Error check task says:
+xWakeTime = 5184, xExpectedWakeTime = 5182, Difference = 2
+Print task blocked too long!
+Because error check task specifies a relative waiting time, and for this
+simulator, system ticks prone to raise during FreeRTOS API execution, and one or
+more system ticks may be raised before actual waiting. Try to decrease system
+tick rate to avoid this.
+
+Error check task says:
+Error in multi events tasks!
+And there many memcmp error messages.
+The multi events task creates tasks of different priorities. The high priority
+task explicitly schedules low priority tasks. But before low priority tasks
+finish their expected operations, interrupts may schedule high pirority task to
+run again. And the error occurs. Try to decrease system tick rate to avoid this.
+
+Error check task says:
+Error in block time test tasks!
+Because time expirations of block time test demo are absolute ticks, and not
+relative to system tick rate. Try to increase system tick rate, or run that demo
+with error check demo only, or try both solutions together.
+
+Error check task says something else.
+Of course, they are related to system tick raising time. Try to tune yourself,
+using the method mentioned above.
+
+From issues mentioned above, it is obvious that, when invoking a FreeRTOS API,
+system tick interrupts prone to raise. So, system tick raising time should be
+recorded. If the count of system ticks raise at FreeRTOS API execution time is
+significantly larger than other execution time, the simulator should be
+implemented with user space thread, like Trampoline[1] and FreeOSEK[2] do, to
+improve efficiency.
+
+[1] http://trampoline.rts-software.org/ 
+[2] http://opensek.sourceforge.net/
+
+
+Performance Evaluation
+I evaluated this contribution with tasks created from main.c, though I dont't
+think the evaluation is appropriate, for tasks are not relative. But the test
+result does show something interesting. Maybe sometime later, I will use real
+application with relative tasks to re-evaluate the simulator.  Now, main.c in
+the contribution is the same as the one that I used to test this simulator.  For
+full evaluation data, please refer to file 'performance evaluation.ods'.
+
+Evaluation environment:
+Linux Distribution: ubuntu 10.04
+
+CPU: Intel(R) Core(TM) i3 CPU       M 330  @ 2.13GHz
+with Hyper-Threading technology, 2 physical cores, 4 logical cores.
+
+Kernel: 2.6.32-28-generic #55-Ubuntu SMP Mon Jan 10 21:21:01 UTC 2011 i686
+and 2.6.31-11-rt #154-Ubuntu SMP PREEMPT RT Wed Jun 9 12:28:53 UTC 2010 i686
+shipped by ubuntu 10.04
+
+Evaluation result with different config parameters is shown below:
+With kernel 2.6.32-28-generic #55-Ubuntu SMP Mon Jan 10 21:21:01 UTC 2011 i686
+
+Async       Fast        Interrupts  Task        Echo
+Interrupt   Interrupt   per         Switches    Client      portYield   portENTER/EXIT_CRITICAL
+Operation   Response    second      per second  Messages    per second  per second
+                                                per second
+0           0           3137        84          3038        119         27509
+0           1           2951        82          2851        117         25822
+1           0           2550        7711        2450        5906        Not Available
+1           1           2625        7768        2525        5878        Not Available
+
+
+With kernel 2.6.31-11-rt #154-Ubuntu SMP PREEMPT RT Wed Jun 9 12:28:53 UTC 2010 i686
+
+Async       Fast        Interrupts  Task        Echo
+Interrupt   Interrupt   per         Switches    Client      portYield   portENTER/EXIT_CRITICAL
+Operation   Response    second      per second  Messages    per second  per second
+                                                per second
+0	        0	        2622	    4740	    2522	    3447	    25752
+0	        1	        2717	    4988	    2617	    3593	    26703
+1	        0	        4862	    13440	    4762	    10139	    Not Available
+1	        1	        4285	    12246	    4185	    9359	    Not Available
+
+For non-rt kernel, when async interrupt operation is the same, different fast
+interupt response parameters don't cause much difference for each item.
+
+For non-rt kernel, when async interrupt operation is on, interrupt related
+operations that run in task context will not be processed by management thread.
+But task related operations are still processed by management thread. So, tasks
+will run faster. And some tasks, such as math tasks, will send their portYield
+request to management thread, before echo server sends its message to the echo
+client task. And, there will be much more task switches, less interrupts, and
+less echo client messages.
+
+For rt kernel, compared with non-rt kernel, when async interrupt operation is
+off, voluntarily portYield is much higher. This phenomenon is very interesting.
+When a message is sent out by the echo client, the client will wait for a
+FreeRTOS semaphore. And the procedure is shown briefly:
+
+/* Echo client sends
+ * a message
+ */
+portENTER_CRITICAL()
+...
+write( message )
+...                      -+ 
+portEXIT_CRITICAL()       | Maybe for non-rt kernel, the echo message comes
+/* Echo client receives   | in this range most of the time.
+ *the echo message        |
+ */                       | But for rt kernel, the echo message comes later.
+portENTER_CRITICAL()      |
+...                      -+
+portYIELD()
+...                      -+
+portEXIT_CRITICAL()       | And, sometimes in this range.
+...                      -+
+
+I guess, for rt kernel, processes intend to be preemptted. When echo server is
+preemptted several times, other tasks, such as math tasks, run, and increase
+portYield request count dramatically. To verify this, element request statstics
+should be gathered for each task.
+
+For rt kernel, when async interrupt operation is on, interrupts, task switches
+and echo client messages are much more larger than these of non-rt kernel. I
+guess, for rt kernel, when an interrupt comes, the management thread is
+scheduled immediately, and the interrupt is responded more quickly than that of
+non-rt kernel. And this leads to more interrupt responses.
+
+For rt kernel, when async interrupt operation is on. When fast interrupt
+response is off, there are more interrupt reponses than that when fast interrupt
+response is on. I guess, when fast interrupt response is on, when the management
+loop checks interrupts, no interrupt is ready, and the loop has to poll again,
+but also, no interrupt is ready at poll time, and the management thread is
+preemptted by some other processes.
+
+I think, for relative tasks, the simulator efficiency should be better when
+async interrupt operation is on.
+
+Maybe someone is wondering, why the simulator is tested with rt kernel.
+For my Acer ASPIRE 4741G laptop, there is a bug related to ACPI EC. If someone
+interests in the problem, please refer to:
+https://bugs.launchpad.net/ubuntu/+source/linux/+bug/578506
+https://bugzilla.kernel.org/show_bug.cgi?id=14733
+And it looks "Add delay before data write, take #2" patch can fix the bug.
+I have not tried that patch yet, and use 2.6.31-11-rt kernel for daily life.
+
+And there raises another problem, why I use non-rt kernel to test the simulator.
+Sorry, I forget the reason, maybe it is just a coincidence. :D
+
+
+All feedbacks are welcome, but you should be patient, maybe I will reply months
+later. :D
+
+
+vim: set textwidth=80 tabstop=4 shiftwidth=4 expandtab:
